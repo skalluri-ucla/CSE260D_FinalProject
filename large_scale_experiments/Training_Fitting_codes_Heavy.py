@@ -1,5 +1,5 @@
 """
-MWPS Big Classifier Training (Light 3D, 2-phase test, Indexer-based)
+MWPS Big Classifier Training (Heavy 3D, 2-phase test, Indexer-based)
 - Phase 1 (train1): train on INDEXER_NPZ (e.g., Sidhi_dataframe...npz)
     * Forgettability on GOLDEN          → forgettability_train1_{indexer}.xlsx
     * Model                             → Model_train_1_{indexer}.keras
@@ -11,6 +11,7 @@ MWPS Big Classifier Training (Light 3D, 2-phase test, Indexer-based)
 """
 
 import os
+import sys
 import gc
 import shutil
 from datetime import datetime
@@ -23,10 +24,9 @@ from tensorflow.keras import layers, models, regularizers
 from tensorflow.keras.utils import Sequence
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 
-# import your models
-from Ai_Model_codes import build_mwps_light_classifier   # <<< use LIGHT version here
-
+from model_generation.Model import build_mwps_heavy_classifier
 
 
 # =============================================================================
@@ -42,8 +42,7 @@ else:
     )
 
 GOLDEN_NPZ_PATH   = os.path.join(BASE_DIR, "classification_sequences_GOLDEN.npz")
-# Indexer_NPZ_PATH  = os.path.join(BASE_DIR, "Sidhi_dataframe_w_perp_and_div_v2.npz")
-Indexer_NPZ_PATH  = os.path.join(BASE_DIR, "classification_sequences_GOLDEN.npz")
+Indexer_NPZ_PATH  = os.path.join(BASE_DIR, "Sidhi_dataframe_w_perp_and_div_v2.npz")
 ALL_NPZ_PATH      = os.path.join(BASE_DIR, "MWPSDATA_EURUSD_M15_O21uv1_classification_sequences.npz")
 
 print("BASE_DIR =", BASE_DIR)
@@ -57,11 +56,68 @@ if os.name == "nt":
 else:
     LOCAL_CACHE_ROOT = "/home/revi/MWPS_cache"
 
-RUN_PREFIX = f"EXP_Light_{INDEXER_CORE_NAME}"     # experiment folder per indexer
+RUN_PREFIX = f"EXP_Heavy_{INDEXER_CORE_NAME}"     # experiment folder per indexer
 EXPERIMENT_DIR = os.path.join(LOCAL_CACHE_ROOT, RUN_PREFIX)
 os.makedirs(EXPERIMENT_DIR, exist_ok=True)
 
 print("EXPERIMENT_DIR =", EXPERIMENT_DIR)
+
+
+# =============================================================================
+# OPTIONAL ARTIFACT PATH HELPER (not strictly needed, but kept)
+# =============================================================================
+
+def make_artifact_paths(
+    npz_path: str,
+    use_subfolders: bool = True,
+    experiment_root: str = None,
+    run_prefix: str = "",
+) -> dict:
+    """
+    If experiment_root is given, all artifacts go under:
+        experiment_root / run_prefix / {models,logs,reports}
+    Otherwise, they go next to npz_path (old behavior).
+    """
+    npz_path = os.path.abspath(npz_path)
+    if not os.path.exists(npz_path):
+        raise FileNotFoundError(f"NPZ file not found: {npz_path}")
+
+    npz_name = os.path.basename(npz_path)
+    core_name = os.path.splitext(npz_name)[0]
+
+    # Decide base_dir for this experiment
+    if experiment_root is not None:
+        if run_prefix:
+            base_dir = os.path.join(experiment_root, run_prefix)
+        else:
+            base_dir = experiment_root
+    else:
+        base_dir = os.path.dirname(npz_path)
+
+    os.makedirs(base_dir, exist_ok=True)
+
+    if use_subfolders:
+        model_dir  = os.path.join(base_dir, "models")
+        logs_dir   = os.path.join(base_dir, "logs")
+        report_dir = os.path.join(base_dir, "reports")
+        for d in [model_dir, logs_dir, report_dir]:
+            os.makedirs(d, exist_ok=True)
+        prefix = os.path.join(model_dir, core_name)
+    else:
+        prefix = os.path.join(base_dir, core_name)
+
+    return {
+        "prefix":          prefix,
+        "best":            prefix + "_best.keras",
+        "final":           prefix + "_final.keras",
+        "label_map":       prefix + "_label_map.npy",
+        "history":         prefix + "_history.csv",
+        "summary":         prefix + "_summary.txt",
+        "config":          prefix + "_config.json",
+        "forgettability":  prefix + "_forgettability.xlsx",
+        "difficulty_plot": prefix + "_difficulty_plot.png",
+        "confusion":       prefix + "_confusion_matrix.png",
+    }
 
 
 # =============================================================================
@@ -422,12 +478,12 @@ class NPZStreamingSequence(Sequence):
 
 
 # =============================================================================
-# BUILD + COMPILE LIGHT MODEL
+# BUILD + COMPILE MODEL
 # =============================================================================
 
 def build_and_compile_model(time_steps, n_features, num_classes, label_values, alpha=1.0, lr=1e-4):
-    # LIGHT MWPS classifier
-    model = build_mwps_light_classifier(
+    # Heavy 3D classifier
+    model = build_mwps_heavy_classifier(
         time_steps=time_steps,
         n_features=n_features,
         num_classes=num_classes,
@@ -496,7 +552,7 @@ def cache_npz_to_local(npz_path: str, dest_dir: str) -> str:
 # =============================================================================
 
 def run_train1(indexer_npz_local, golden_npz_local, epochs=200, batch_size=64, alpha=1.0):
-    print("\n=== PHASE 1: train1 on INDEXER (LIGHT, forgettability on GOLDEN) ===")
+    print("\n=== PHASE 1: train1 on INDEXER (forgettability on GOLDEN) ===")
 
     # Prepare INDEXER dataset (training)
     indexer = prepare_dataset(indexer_npz_local)
@@ -522,7 +578,7 @@ def run_train1(indexer_npz_local, golden_npz_local, epochs=200, batch_size=64, a
     np.save(label_map_path, label2idx)
     print(f"[save] label2idx → {label_map_path}")
 
-    # Build & compile LIGHT model
+    # Build & compile model
     model, loss_fn = build_and_compile_model(
         time_steps=time_steps,
         n_features=n_features,
@@ -578,9 +634,9 @@ def run_train1(indexer_npz_local, golden_npz_local, epochs=200, batch_size=64, a
     )
 
     # Final eval on full INDEXER
-    print("\n=== FINAL EVAL on INDEXER (train1, LIGHT) ===")
+    print("\n=== FINAL EVAL on INDEXER (train1) ===")
     all_loss, all_acc = model.evaluate(X_idx, y_idx_idx, verbose=0)
-    print(f"train1 (INDEXER, LIGHT) → loss={all_loss:.4f}, acc={all_acc:.4f}")
+    print(f"train1 (INDEXER) → loss={all_loss:.4f}, acc={all_acc:.4f}")
 
     # Save model and history
     model.save(model_train1_path)
@@ -606,7 +662,7 @@ def run_train1(indexer_npz_local, golden_npz_local, epochs=200, batch_size=64, a
 # =============================================================================
 
 def run_train2(all_npz_local, phase1_info, epochs=200, batch_size=64, alpha=1.0):
-    print("\n=== PHASE 2: train2 on ALL (LIGHT, start from Model_train_1) ===")
+    print("\n=== PHASE 2: train2 on ALL (start from Model_train_1) ===")
 
     model_train1_path = phase1_info["model_path"]
     label2idx = phase1_info["label2idx"]
@@ -641,7 +697,7 @@ def run_train2(all_npz_local, phase1_info, epochs=200, batch_size=64, alpha=1.0)
     class_weights_all = make_class_weights(y_all_idx_used[pos_train], num_classes=num_classes)
     print("[train2] class_weights:", class_weights_all)
 
-    # ---- Load Model_train_1 (LIGHT) and recompile ----
+    # ---- Load Model_train_1 and recompile ----
     model = tf.keras.models.load_model(
         model_train1_path,
         compile=False,
@@ -712,7 +768,7 @@ def run_train2(all_npz_local, phase1_info, epochs=200, batch_size=64, alpha=1.0)
     )
 
     # ---- Final eval on ALL using streaming as well ----
-    print("\n=== FINAL EVAL on ALL (train2, streaming, LIGHT) ===")
+    print("\n=== FINAL EVAL on ALL (train2, streaming) ===")
     eval_positions = np.arange(n_used)
     eval_seq = NPZStreamingSequence(
         X_memmap=X_memmap,
@@ -723,7 +779,7 @@ def run_train2(all_npz_local, phase1_info, epochs=200, batch_size=64, alpha=1.0)
         shuffle=False,
     )
     all_loss2, all_acc2 = model.evaluate(eval_seq, verbose=0)
-    print(f"train2 (ALL, LIGHT) → loss={all_loss2:.4f}, acc={all_acc2:.4f}")
+    print(f"train2 (ALL) → loss={all_loss2:.4f}, acc={all_acc2:.4f}")
 
     # ---- Save model and history ----
     model.save(model_train2_path)
@@ -741,11 +797,11 @@ def run_train2(all_npz_local, phase1_info, epochs=200, batch_size=64, alpha=1.0)
 
 
 # =============================================================================
-# MAIN (2-phase test, LIGHT)
+# MAIN (2-phase test)
 # =============================================================================
 
 if __name__ == "__main__":
-    print("=== MWPS 2-phase LIGHT test (INDEXER-based): INDEXER → ALL, forgettability on GOLDEN ===")
+    print("=== MWPS 2-phase HEAVY test (INDEXER-based): INDEXER → ALL, forgettability on GOLDEN ===")
     print("BASE_DIR       =", BASE_DIR)
     print("EXPERIMENT_DIR =", EXPERIMENT_DIR)
     print("INDEXER_CORE   =", INDEXER_CORE_NAME)

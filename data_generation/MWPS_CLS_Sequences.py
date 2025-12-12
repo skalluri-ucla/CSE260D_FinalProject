@@ -4,17 +4,6 @@ import os
 import numpy as np
 import pandas as pd
 
-
-
-
-
-
-
-
-
-
-
-
 '''
     # ------------------ PATHS -----------------------
     core1_path = (
@@ -33,12 +22,6 @@ core1_path = r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M
 label_path = r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M15 e.500 V.2025-07-03-04-25\Unseen_scaled_Core_target.csv"
 indexer_file_path = r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M15 e.500 V.2025-07-03-04-25\Unseen Indexer data.csv"
 
-
-
-
-
-
-
 # =============================================================================
 # WINDOW FUNCTION
 # =============================================================================
@@ -50,13 +33,6 @@ def _windows_2d(X, window):
         np.lib.stride_tricks.sliding_window_view(X, (window, X.shape[1])),
         axis=1
     )
-
-
-
-
-
-
-
 
 
 def create_classification_sequences(

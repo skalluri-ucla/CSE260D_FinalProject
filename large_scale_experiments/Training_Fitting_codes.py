@@ -1,14 +1,20 @@
+"""
+MWPS Big Classifier Training
+- Train on a single NPZ (e.g., GOLDEN or ALL)
+- Uses a lighter classifier + distance-aware custom loss
+"""
+
+import os
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models, regularizers
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import train_test_split
 
 import io
 import os
 import sys
-import logging
-from datetime import datetime, timedelta
-import joblib
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import pyodbc
+
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
@@ -28,19 +34,10 @@ import shutil
 import hashlib
 import base64
 
-
 import hashlib
 import base64
 import pandas as pd
 import asyncio
-
-
-# from tensorflow.keras import mixed_precision
-# mixed_precision.set_global_policy("mixed_float16")
-
-
-
-
 
 
 # Determine the current operating system
@@ -77,23 +74,9 @@ ReVi_API_path = os.path.join(base_path, "ReVi_API")
 
 
 
+# We do NOT need build_big_mwps_classifier anymore for this script.
+# from Ai_Model_codes import build_big_mwps_classifier
 
-"""
-MWPS Big Classifier Training
-- Pretrain on GOLDEN sequences
-- Then continue training on ALL sequences
-"""
-
-import os
-import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers, models, regularizers
-from sklearn.utils.class_weight import compute_class_weight
-from sklearn.model_selection import train_test_split
-
-
-from Ai_Model_codes import build_big_mwps_classifier
-# Adding the path to the directory containing ReViKeyWords script
 from ReViKeyWords import (
     get_table_name,
     connect_to_database,
@@ -113,34 +96,151 @@ from ReViKeyWords import (
 
 
 
-
-
-
 # =============================================================================
 # CONFIG
 # =============================================================================
 
-BASE_DIR = cross_os_path(r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M15 e.500 V.2025-07-03-04-25")
+if os.name == "nt":
+    # Windows machine (e.g., DELLR15 / ReVi4090)
+    BASE_DIR = r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M15 e.500 V.2025-07-03-04-25"
+else:
+    # Linux machine (RTX3090 VPS mount)
+    BASE_DIR = "/mnt/3090D/ReViAI/Trained models/MWPS/epochs 500/EURUSD/M15/MWPS EURUSD M15 e.500 V.2025-07-03-04-25"
+
+print("BASE_DIR =", BASE_DIR)
 
 GOLDEN_NPZ_PATH = os.path.join(BASE_DIR, "classification_sequences_GOLDEN.npz")
 ALL_NPZ_PATH    = os.path.join(BASE_DIR, "MWPSDATA_EURUSD_M15_O21uv1_classification_sequences.npz")
 
-MODEL_SAVE_PATH = os.path.join(BASE_DIR, "MWPS_3M_Classifier.h5")
+MODEL_SAVE_PATH = os.path.join(BASE_DIR, "MWPS_3M_Classifier_Light.h5")
 LABEL_MAP_PATH  = os.path.join(BASE_DIR, "MWPS_3M_Classifier_label_map.npy")  # saves label2idx
 
+
+
+
+def build_mwps_light_classifier(
+    time_steps: int,
+    n_features: int,
+    num_classes: int,
+    l2_reg: float = 1e-5,
+    dropout_rate: float = 0.3,
+) -> tf.keras.Model:
+    """
+    Input:  (batch, time_steps, n_features)
+    Output: class probabilities (num_classes) via softmax
+    """
+
+    reg = regularizers.l2(l2_reg)
+
+    inp = layers.Input(shape=(time_steps, n_features), name="X_seq")
+
+    # Optional masking if you pad with zeros at some point
+    x = layers.Masking(mask_value=0.0, name="mask")(inp)
+
+    # 1D Conv for local temporal patterns
+    x = layers.Conv1D(
+        filters=128,
+        kernel_size=5,
+        padding="same",
+        activation="relu",
+        kernel_regularizer=reg,
+        name="conv1",
+    )(x)
+    x = layers.BatchNormalization(name="bn_conv1")(x)
+
+    # BiLSTM stack
+    x = layers.Bidirectional(
+        layers.LSTM(
+            128,
+            return_sequences=True,
+            kernel_regularizer=reg,
+            name="lstm_1",
+        ),
+        name="bilstm_1",
+    )(x)
+
+    x = layers.Bidirectional(
+        layers.LSTM(
+            128,
+            return_sequences=False,
+            kernel_regularizer=reg,
+            name="lstm_2",
+        ),
+        name="bilstm_2",
+    )(x)
+
+    # Dense head
+    x = layers.Dense(
+        256,
+        activation="relu",
+        kernel_regularizer=reg,
+        name="dense_1",
+    )(x)
+    x = layers.Dropout(dropout_rate, name="dropout_1")(x)
+
+    x = layers.Dense(
+        128,
+        activation="relu",
+        kernel_regularizer=reg,
+        name="dense_2",
+    )(x)
+    x = layers.Dropout(dropout_rate, name="dropout_2")(x)
+
+    out = layers.Dense(
+        num_classes,
+        activation="softmax",
+        name="class_output",
+    )(x)
+
+    model = models.Model(inputs=inp, outputs=out, name="MWPS_LightClassifier")
+    return model
+
+
 # =============================================================================
-# MODEL
+# CUSTOM LOSS: distance-aware
 # =============================================================================
 
+def make_distance_aware_loss(label_values, alpha: float = 1.0):
+    """
+    label_values: list/np.array of numeric label values (e.g. [-10, -9, ..., 10])
+                  indexed by class index (0..num_classes-1)
 
+    alpha: weight for distance penalty term.
+           Larger alpha => stronger punishment for far misclassifications.
 
+    Penalty = CE + alpha * |y_true_numeric - y_pred_numeric|
+    """
 
+    label_values = tf.constant(label_values, dtype=tf.float32)  # (C,)
 
+    def loss_fn(y_true, y_pred):
+        """
+        y_true: integer class indices, shape (batch,) or (batch,1)
+        y_pred: softmax probabilities, shape (batch, C)
+        """
+        # Ensure correct shape
+        y_true = tf.cast(tf.squeeze(y_true, axis=-1), tf.int32)  # (batch,)
 
+        # Standard sparse categorical cross-entropy
+        ce = tf.keras.losses.sparse_categorical_crossentropy(
+            y_true,
+            y_pred,
+            from_logits=False,
+        )  # (batch,)
 
+        # Numeric value of true label: label_values[y_true]
+        true_vals = tf.gather(label_values, y_true)  # (batch,)
 
+        # Expected numeric value under predicted distribution:
+        # pred_vals[i] = sum_c p[i,c] * label_values[c]
+        pred_vals = tf.tensordot(y_pred, label_values, axes=1)  # (batch,)
 
+        # Distance penalty: |true_numeric - pred_numeric|
+        dist = tf.abs(true_vals - pred_vals)  # (batch,)
 
+        return ce + alpha * dist
+
+    return loss_fn
 
 
 # =============================================================================
@@ -150,7 +250,7 @@ LABEL_MAP_PATH  = os.path.join(BASE_DIR, "MWPS_3M_Classifier_label_map.npy")  # 
 def load_npz_sequences(path):
     """Load X, y, t_seq from an npz (t_seq optional)."""
     data = np.load(path, allow_pickle=True)
-    X = data["X_low"]
+    X = data["X_low"]   # (N, T, 1, F, 1)
     y = data["y"]
     t_seq = data["t_seq"] if "t_seq" in data.files else None
 
@@ -167,8 +267,8 @@ def load_npz_sequences(path):
 
 def build_label_mapping(y_all):
     """
-    Build label2idx mapping from ALL labels.
-    Example labels: [-10, -9, ..., -1, 1, ..., 10]
+    Build label2idx mapping from numeric labels in y_all.
+    Example labels: [-10, -9, ..., -1, 0, 1, ..., 10]
     """
     unique_labels = np.unique(y_all)        # sorted
     unique_labels = unique_labels.tolist()
@@ -210,43 +310,59 @@ def make_class_weights(y_idx, num_classes):
     return class_weights
 
 
-
-
-
-
+# =============================================================================
+# TRAINING PIPELINE
+# =============================================================================
 
 def train_mwps_classifier(training_data_path):
+    """
+    Train on a single NPZ file (e.g., GOLDEN or ALL).
+    Uses the light model + distance-aware loss.
+    """
     # ---------------- Load data ----------------
-    # Expecting load_npz_sequences to return (X, y_raw, meta)
-    X, y_raw, _ = load_npz_sequences(training_data_path)
+    X_5d, y_raw, _ = load_npz_sequences(training_data_path)  # X_5d: (N, T, 1, F, 1)
 
-    # X shape: (N, T, 1, F, 1)
+    # Reshape to 3D for the new model: (N, T, F)
+    X = X_5d[:, :, 0, :, 0]
+    print("[reshape] X 5D → 3D:", X.shape)
+
     time_steps = X.shape[1]
-    n_features = X.shape[3]
+    n_features = X.shape[2]
 
     # ---------------- Label mapping ----------------
     label2idx, idx2label, num_classes = build_label_mapping(y_raw)
 
-    # Encode labels
+    # Encode labels to 0..num_classes-1
     y_idx = encode_labels(y_raw, label2idx)
 
     # Save label2idx for later inference
     np.save(LABEL_MAP_PATH, label2idx)
     print(f"[save] label2idx → {LABEL_MAP_PATH}")
 
+    # label_values aligned with class indices: [v_0, v_1, ..., v_C-1]
+    label_values = np.array([idx2label[i] for i in range(num_classes)], dtype=np.float32)
+    print("label_values (per class index):", label_values)
+
     # ---------------- Build model ----------------
-    model = build_big_mwps_classifier(
+    model = build_mwps_light_classifier(
         time_steps=time_steps,
         n_features=n_features,
         num_classes=num_classes,
         l2_reg=1e-5,
         dropout_rate=0.3,
     )
+
+    loss_fn = make_distance_aware_loss(label_values, alpha=1.0)  # tune alpha if needed
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+        loss=loss_fn,
+        metrics=["accuracy"],
+    )
+
     model.summary()
 
     # ---------------- Train/validation split ----------------
-    from sklearn.model_selection import train_test_split
-
     X_train, X_val, y_train, y_val = train_test_split(
         X,
         y_idx,
@@ -274,7 +390,7 @@ def train_mwps_classifier(training_data_path):
         y_train,
         validation_data=(X_val, y_val),
         epochs=80,
-        batch_size=32,
+        batch_size=64,   # you can likely go higher on 4090
         class_weight=class_weights,
         callbacks=callbacks,
         verbose=2,
@@ -290,12 +406,12 @@ def train_mwps_classifier(training_data_path):
     print(f"\n[save] model → {MODEL_SAVE_PATH}")
 
 
-
-
-
+# =============================================================================
+# MAIN
+# =============================================================================
 
 if __name__ == "__main__":
-    print("=== MWPS Big Classifier Trainer ===")
+    print("=== MWPS Big Classifier Trainer (Light) ===")
 
     try:
         print("TensorFlow version:", tf.__version__)
@@ -303,9 +419,10 @@ if __name__ == "__main__":
     except Exception as e:
         print("TensorFlow not fully available:", e)
 
+    # For now: train on GOLDEN only
     train_mwps_classifier(GOLDEN_NPZ_PATH)
+
+    # Later you can switch to ALL:
+    # train_mwps_classifier(ALL_NPZ_PATH)
+
     print("=== DONE ===")
-
-
-
-

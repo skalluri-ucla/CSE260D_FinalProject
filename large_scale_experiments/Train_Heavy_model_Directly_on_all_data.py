@@ -1,16 +1,16 @@
 """
-MWPS Light Classifier Training (ONE-PHASE, ALL vs GOLDEN, streaming)
+MWPS Heavy Classifier Training (ONE-PHASE, ALL vs GOLDEN, streaming)
 
-- Train on ALL NPZ (streaming from memmap) using MWPS_LightClassifier
+- Train on ALL NPZ (streaming from memmap)
     * ALL dataset: MWPSDATA_EURUSD_M15_O21uv1_classification_sequences.npz
 - Evaluate forgettability on GOLDEN after every epoch
     * GOLDEN: classification_sequences_GOLDEN.npz
 
 Artifacts:
-    * Forgettability on GOLDEN          → forgettability_LIGHT_ALL_{core}.xlsx
-    * Model                             → Model_LIGHT_train_ALL_{core}.keras
-    * History                           → hist_LIGHT_train_ALL_{core}.xlsx
-    * label2idx map                     → label_map_LIGHT_ALL_{core}.npy
+    * Forgettability on GOLDEN          → forgettability_ALL_{core}.xlsx
+    * Model                             → Model_train_ALL_{core}.keras
+    * History                           → hist_train_ALL_{core}.xlsx
+    * label2idx map                     → label_map_ALL_{core}.npy
 
 Also:
     * Copies this script + Ai_Model_codes.py into /tmp/mwps_cache for reproducibility
@@ -27,14 +27,14 @@ from tensorflow.keras.utils import Sequence
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.model_selection import train_test_split
 
-from Ai_Model_codes import build_mwps_light_classifier  # <-- LIGHT MODEL
+from model_generation.Model import build_mwps_heavy_classifier
 
 
 # =============================================================================
 # PATH / CONFIG
 # =============================================================================
 
-# BASE_DIR where NPZs live (same pattern as your other scripts)
+# BASE_DIR where NPZs live (same pattern as your 2-phase script)
 if os.name == "nt":
     BASE_DIR = r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15\MWPS EURUSD M15 e.500 V.2025-07-03-04-25"
 else:
@@ -58,7 +58,7 @@ if os.name == "nt":
 else:
     LOCAL_CACHE_ROOT = "/home/revi/MWPS_cache"
 
-RUN_PREFIX = f"EXP_Light_ALL_{ALL_CORE_NAME}"
+RUN_PREFIX = f"EXP_Heavy_ALL_{ALL_CORE_NAME}"
 EXPERIMENT_DIR = os.path.join(LOCAL_CACHE_ROOT, RUN_PREFIX)
 os.makedirs(EXPERIMENT_DIR, exist_ok=True)
 
@@ -139,7 +139,7 @@ def make_distance_aware_loss(label_values, alpha: float = 1.0):
 
 
 # =============================================================================
-# FORGETTABILITY CALLBACK (GOLDEN)
+# FORGETTABILITY CALLBACK
 # =============================================================================
 
 class ForgettabilityCallback(tf.keras.callbacks.Callback):
@@ -424,11 +424,11 @@ class NPZStreamingSequence(Sequence):
 
 
 # =============================================================================
-# BUILD + COMPILE LIGHT MODEL
+# BUILD + COMPILE HEAVY MODEL
 # =============================================================================
 
-def build_and_compile_light_model(time_steps, n_features, num_classes, label_values, alpha=1.0, lr=1e-4):
-    model = build_mwps_light_classifier(
+def build_and_compile_model(time_steps, n_features, num_classes, label_values, alpha=1.0, lr=1e-4):
+    model = build_mwps_heavy_classifier(
         time_steps=time_steps,
         n_features=n_features,
         num_classes=num_classes,
@@ -486,11 +486,11 @@ def cache_npz_to_local(npz_path: str, dest_dir: str) -> str:
 
 
 # =============================================================================
-# ONE-PHASE TRAINING: LIGHT on ALL (streaming) vs GOLDEN (forgettability)
+# ONE-PHASE TRAINING: ALL (streaming) vs GOLDEN (forgettability)
 # =============================================================================
 
-def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=64, alpha=1.0):
-    print("\n=== ONE-PHASE: Train LIGHT on ALL (streaming), forgettability on GOLDEN ===")
+def run_train_all(all_npz_local, golden_npz_local, epochs=200, batch_size=64, alpha=1.0):
+    print("\n=== ONE-PHASE: Train HEAVY on ALL (streaming), forgettability on GOLDEN ===")
 
     # ---- Prepare ALL (build mapping + streaming) ----
     all_data = prepare_all_for_streaming_build_mapping(all_npz_local)
@@ -510,7 +510,7 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
     print(f"[ALL] filtered samples = {len(y_all_idx_used)}")
 
     # Save label map
-    label_map_path = os.path.join(EXPERIMENT_DIR, f"label_map_LIGHT_ALL_{ALL_CORE_NAME}.npy")
+    label_map_path = os.path.join(EXPERIMENT_DIR, f"label_map_ALL_{ALL_CORE_NAME}.npy")
     np.save(label_map_path, label2idx)
     print(f"[save] label2idx → {label_map_path}")
 
@@ -520,8 +520,8 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
     y_g = golden["y_idx"]
     t_g = golden["t_seq"]
 
-    # ---- Build & compile LIGHT model ----
-    model, _ = build_and_compile_light_model(
+    # ---- Build & compile HEAVY model ----
+    model, _ = build_and_compile_model(
         time_steps=time_steps,
         n_features=n_features,
         num_classes=num_classes,
@@ -565,9 +565,9 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
     )
 
     # ---- Callbacks ----
-    forget_all_path = os.path.join(EXPERIMENT_DIR, f"forgettability_LIGHT_ALL_{ALL_CORE_NAME}.xlsx")
-    model_all_path  = os.path.join(EXPERIMENT_DIR, f"Model_LIGHT_train_ALL_{ALL_CORE_NAME}.keras")
-    hist_all_path   = os.path.join(EXPERIMENT_DIR, f"hist_LIGHT_train_ALL_{ALL_CORE_NAME}.xlsx")
+    forget_all_path = os.path.join(EXPERIMENT_DIR, f"forgettability_ALL_{ALL_CORE_NAME}.xlsx")
+    model_all_path  = os.path.join(EXPERIMENT_DIR, f"Model_train_ALL_{ALL_CORE_NAME}.keras")
+    hist_all_path   = os.path.join(EXPERIMENT_DIR, f"hist_train_ALL_{ALL_CORE_NAME}.xlsx")
 
     forget_cb = ForgettabilityCallback(
         X_full=X_g,
@@ -597,7 +597,7 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
     )
 
     # ---- Final eval on ALL (streaming) ----
-    print("\n=== FINAL EVAL on ALL (streaming, LIGHT) ===")
+    print("\n=== FINAL EVAL on ALL (streaming) ===")
     eval_positions = np.arange(n_used)
     eval_seq = NPZStreamingSequence(
         X_memmap=X_memmap,
@@ -608,15 +608,15 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
         shuffle=False,
     )
     all_loss, all_acc = model.evaluate(eval_seq, verbose=0)
-    print(f"ALL (LIGHT) → loss={all_loss:.4f}, acc={all_acc:.4f}")
+    print(f"ALL → loss={all_loss:.4f}, acc={all_acc:.4f}")
 
     # ---- Save model + history ----
     model.save(model_all_path)
-    print(f"[save] Model_LIGHT_train_ALL → {model_all_path}")
+    print(f"[save] Model_train_ALL → {model_all_path}")
 
     hist_df = pd.DataFrame(history.history)
     hist_df.to_excel(hist_all_path, index=False)
-    print(f"[save] hist_LIGHT_train_ALL → {hist_all_path}")
+    print(f"[save] hist_train_ALL → {hist_all_path}")
 
     return {
         "model_path": model_all_path,
@@ -630,7 +630,7 @@ def run_train_light_all(all_npz_local, golden_npz_local, epochs=200, batch_size=
 # =============================================================================
 
 if __name__ == "__main__":
-    print("=== MWPS ONE-PHASE LIGHT: ALL (streaming) vs GOLDEN (forgettability) ===")
+    print("=== MWPS ONE-PHASE HEAVY: ALL (streaming) vs GOLDEN (forgettability) ===")
     print("BASE_DIR       =", BASE_DIR)
     print("EXPERIMENT_DIR =", EXPERIMENT_DIR)
     print("ALL_CORE_NAME  =", ALL_CORE_NAME)
@@ -652,8 +652,8 @@ if __name__ == "__main__":
     GOLDEN_NPZ_LOCAL = cache_npz_to_local(GOLDEN_NPZ_PATH, EXPERIMENT_DIR)
     ALL_NPZ_LOCAL    = cache_npz_to_local(ALL_NPZ_PATH,    EXPERIMENT_DIR)
 
-    # Run training (LIGHT)
-    phase_info = run_train_light_all(
+    # Run training
+    phase_info = run_train_all(
         all_npz_local=ALL_NPZ_LOCAL,
         golden_npz_local=GOLDEN_NPZ_LOCAL,
         epochs=200,
@@ -661,6 +661,6 @@ if __name__ == "__main__":
         alpha=1.0,
     )
 
-    print("\n=== DONE (ONE-PHASE LIGHT ALL vs GOLDEN) ===")
-    print("Final ALL loss (LIGHT):", phase_info["all_loss"])
-    print("Final ALL acc  (LIGHT):", phase_info["all_acc"])
+    print("\n=== DONE (ONE-PHASE HEAVY ALL vs GOLDEN) ===")
+    print("Final ALL loss:", phase_info["all_loss"])
+    print("Final ALL acc :", phase_info["all_acc"])

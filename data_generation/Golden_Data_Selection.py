@@ -1,12 +1,3 @@
-
-
-
-
-
-
-
-
-
 def Detect_Golden_Representative_Data(
         label_df,
         label_col=None,
@@ -85,3 +76,59 @@ def Detect_Golden_Representative_Data(
     print("Label distribution:", final_df[label_col].value_counts().to_dict())
 
     return final_df
+
+
+
+
+# -------------------------------------------------------------
+#  MAIN EXECUTION
+# -------------------------------------------------------------
+def generate_classification_sequences_main():
+
+    core1_path = (
+        r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15"
+        r"\MWPS EURUSD M15 e.500 V.2025-07-03-04-25"
+        r"\MWPSDATA_EURUSD_M15_O21uv1_Core_1_df.csv"
+    )
+    label_path = (
+        r"D:\ReViAI\Trained models\MWPS\epochs 500\EURUSD\M15"
+        r"\MWPS EURUSD M15 e.500 V.2025-07-03-04-25"
+        r"\MWPSDATA_EURUSD_M15_O21uv1_Core_target.csv"
+    )
+
+    # Extract main folder path
+    main_folder = os.path.dirname(label_path)
+
+    # ---------------- LOAD DATA ----------------
+    labels_df_raw = pd.read_csv(label_path, parse_dates=["DateTime"])
+    actual_label_col = [c for c in labels_df_raw.columns
+                        if "ZigZagNumericLabel" in c][0]
+
+    labels_df = labels_df_raw.set_index("DateTime")[[actual_label_col]]
+    core1_df  = pd.read_csv(core1_path, parse_dates=["DateTime"], index_col="DateTime")
+
+    # ---------------- GOLDEN POINT DETECTION ----------------
+    golden_times = Detect_Golden_Representative_Data(labels_df)
+
+    # Normalize golden index (works if function returns Series, DataFrame, or Index)
+    if isinstance(golden_times, pd.DataFrame) or isinstance(golden_times, pd.Series):
+        golden_index = golden_times.index
+    else:
+        # e.g. list/array of datetimes
+        golden_index = pd.Index(golden_times)
+
+    golden_df = labels_df.loc[golden_index]
+
+    print("\nDetected Golden Points:")
+    print(golden_df.head())
+
+    # ---------------- SAVE GOLDEN TO EXCEL ----------------
+    golden_excel_path = os.path.join(main_folder, "GoldenPoints.xlsx")
+    golden_df.to_excel(golden_excel_path)
+    print(f"\nGolden points saved → {golden_excel_path}\n")
+
+
+
+
+
+
