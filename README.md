@@ -45,6 +45,7 @@ We developed a methodology to prune a raw dataset of 217k rows down to 2,000 sam
 3. Train ConvLSTM on pruned dataset
 4. Conduct ablation studies to evaluate individual pruning strategies
 5. Compare against hand-pruned "golden" dataset baseline
+6. Run large-scale experiments that accounts for full training data and heavy vs lightweight model architectures
 
 ## Results
 
