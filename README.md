@@ -8,7 +8,7 @@ This project constructs a highly informative dataset using advanced pruning meth
 
 ## Abstract
 
-We developed a methodology to prune a raw dataset of 217k rows down to 2,000 samples while maintaining descriptive power for predicting stock turning points. By defining 20 target labels to classify directional movements and potential reversal zones (PRZs), we applied concepts from Marion et al. [1] and Ankner et al. [2] using the Lazy Greedy Algorithm for submodular optimization. 
+We developed a methodology to prune a raw dataset of 217k rows down to 2,000 samples while maintaining descriptive power for predicting stock turning points. By defining 20 target labels to classify directional movements and potential reversal zones (PRZs), we applied concepts from Marion et al. [1] and Ankner et al. [2] using the Lazy Greedy Algorithm for submodular optimization. We then ran multiple ablation studies and experiments to capture patterns of the pruned datasets and how it fairs through different model architectures.  
 
 ### Main Components
 
@@ -27,7 +27,7 @@ We developed a methodology to prune a raw dataset of 217k rows down to 2,000 sam
    - Individual impact of diversity pruning
    - Combined effects analysis
 
-4. **Performance Comparison** (Figure 16)
+4. **Large Scale Experimentation** (Figure 16)
    - Pruned dataset vs. "golden" dataset results
    - Heavy vs. light model comparisons
 
@@ -47,11 +47,10 @@ We developed a methodology to prune a raw dataset of 217k rows down to 2,000 sam
 5. Compare against hand-pruned "golden" dataset baseline
 6. Run large-scale experiments that accounts for full training data and heavy vs lightweight model architectures
 
-## Results
-
-Our perplexity and diversity-guided approach successfully created a compact, resource-efficient dataset that captures meaningful structure in stock movement patterns while achieving superior predictive performance compared to traditional manual pruning methods.
-
 ## References
 
 [1] Marion et al. - Referenced for perplexity-based pruning concepts  
 [2] Ankner et al. - Referenced for diversity-based selection methods
+
+## Link to Results
+The [results](https://drive.google.com/drive/folders/1ASX5ANovrGU4VfSEcrMWb6zwTyh2kpl2?dmr=1&ec=wgc-drive-hero-goto) were too large to be pushed to git, so we included them in a Google Drive for reference. 
