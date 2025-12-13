@@ -22,12 +22,12 @@ We developed a methodology to prune a raw dataset of 217k rows down to 2,000 sam
    - Training on pruned datasets (2,000 samples)
    - Comparison with "golden" dataset (5,000 hand-pruned samples)
 
-3. **Ablation Studies** (Figures 8-11)
+3. **Ablation Studies** 
    - Individual impact of perplexity pruning
    - Individual impact of diversity pruning
    - Combined effects analysis
 
-4. **Large Scale Experimentation** (Figure 16)
+4. **Large Scale Experimentation** 
    - Pruned dataset vs. "golden" dataset results
    - Heavy vs. light model comparisons
 
